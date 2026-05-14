@@ -1,9 +1,7 @@
-import subprocess
-import json
 from flask import Flask, request, jsonify
+from youtube_transcript_api import YouTubeTranscriptApi
 
 app = Flask(__name__)
-POT_PROVIDER_URL = "http://pot-provider.railway.internal:4416"
 
 @app.route('/transcript', methods=['GET'])
 def transcript():
@@ -11,29 +9,24 @@ def transcript():
     lang = request.args.get('lang', 'uk,ru,en')
     if not url:
         return jsonify({"error": "Missing url"}), 400
-    cmd = [
-        "yt-dlp",
-        "--write-auto-sub",
-        "--sub-lang", lang,
-        "--skip-download",
-        "--print", "%(subtitles)s",
-        "--extractor-args",
-        f"youtube:get_pot=True;pot_provider_base_url={POT_PROVIDER_URL}",
-        url
-    ]
+
+    video_id = None
+    if 'watch?v=' in url:
+        video_id = url.split('watch?v=')[1]
+        if '&' in video_id:
+            video_id = video_id.split('&')[0]
+    if not video_id:
+        return jsonify({"error": "Invalid URL"}), 400
+
+    languages = [l.strip() for l in lang.split(',')]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        if result.returncode != 0:
-            return jsonify({"error": result.stderr}), 500
-        # Парсим вывод
-        raw = result.stdout.strip()
-        try:
-            data = json.loads(raw)
-            for lang_code in data:
-                lines = [seg["text"] for seg in data[lang_code]]
-                return jsonify({"language": lang_code, "full_text": " ".join(lines)})
-        except Exception:
-            return jsonify({"raw": raw})
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        full_text = ' '.join([item['text'] for item in transcript])
+        return jsonify({
+            "full_text": full_text,
+            "segments": transcript,
+            "language": languages[0]
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
